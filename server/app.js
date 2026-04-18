@@ -2,18 +2,14 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
-const navigateRouter = require('./routes/navigate');
-const speechRouter = require('./routes/speech');
-
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(express.json({ limit: '10mb' })); // Need higher limit for base64 images
 
 // Routes
-app.use('/api/navigate', navigateRouter);
-app.use('/api/speech', speechRouter);
+app.use('/api/navigate', require('./routes/navigate'));
+app.use('/api/speech', require('./routes/speech'));
+app.use('/api/vision', require('./routes/vision'));  // NEW
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
