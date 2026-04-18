@@ -1,4 +1,4 @@
-# Blind-Helper: AI-Assisted Navigation
+# InVision: AI-Assisted Navigation
 
 This project presents a highly polished, empathetic accessibility tool that combines a conversational AI interface with robust embedded hardware. By pairing an active Web App interface with an independent hardware safety net, it guarantees both fluid interaction and mission-critical safety for visually impaired users.
 
