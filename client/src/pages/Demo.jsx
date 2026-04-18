@@ -9,7 +9,7 @@ const DEMO_STEPS = [
     { id: 3, instruction: 'Stop. Obstacle detected.', obstacle: true, delay: 4000 },
     { id: 4, instruction: 'Step right 1 step.', obstacle: false, delay: 4000 },
     { id: 5, instruction: 'Continue 2 step forward.', obstacle: false, delay: 4000 },
-    { id: 6, instruction: 'You have arrived at the door.', obstacle: false, delay: 0 },
+    { id: 6, instruction: 'You have arrived at the destination.', obstacle: false, delay: 0 },
 ];
 
 const Demo = ({ onExit }) => {
