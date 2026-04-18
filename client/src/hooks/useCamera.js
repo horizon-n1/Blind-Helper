@@ -4,8 +4,15 @@ const useCamera = (onFrame, isGuiding, destination) => {
     const videoRef = useRef(null);
     const streamRef = useRef(null);
     const intervalRef = useRef(null);
-    const isProcessingRef = useRef(false); // NEW — hard lock
+    const isProcessingRef = useRef(false);
+    const onFrameRef = useRef(onFrame);
 
+    // Keep onFrame ref current so interval always calls latest version
+    useEffect(() => {
+        onFrameRef.current = onFrame;
+    }, [onFrame]);
+
+    // Start camera stream once on mount
     useEffect(() => {
         const startCamera = async () => {
             try {
@@ -15,6 +22,10 @@ const useCamera = (onFrame, isGuiding, destination) => {
                 streamRef.current = stream;
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
+                    videoRef.current.onloadedmetadata = () => {
+                        videoRef.current.play();
+                        console.log('Camera ready:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
+                    };
                 }
             } catch (err) {
                 console.error('Camera access denied:', err);
@@ -28,32 +39,60 @@ const useCamera = (onFrame, isGuiding, destination) => {
                 streamRef.current.getTracks().forEach(track => track.stop());
             }
         };
-    }, []);
+    }, []); // only runs once
 
+    // Control the guidance loop separately
     useEffect(() => {
         if (isGuiding && destination) {
+            console.log('Starting camera guidance loop');
+
+            // Clear any existing interval first
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            isProcessingRef.current = false;
+
             intervalRef.current = setInterval(async () => {
-                // Hard skip if still processing last frame
-                if (isProcessingRef.current) return;
+                if (isProcessingRef.current) {
+                    console.log('Skipping frame — still processing');
+                    return;
+                }
 
                 const frame = captureFrame();
-                if (frame && onFrame) {
-                    isProcessingRef.current = true;
-                    await onFrame(frame);
+                if (!frame) {
+                    console.log('No frame captured');
+                    return;
+                }
+
+                isProcessingRef.current = true;
+                try {
+                    await onFrameRef.current(frame);
+                } finally {
                     isProcessingRef.current = false;
                 }
-            }, 4000); // Bumped to 4s to give more breathing room
+            }, 4000); // every 4 seconds
+
         } else {
-            clearInterval(intervalRef.current);
+            console.log('Stopping camera guidance loop');
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
             isProcessingRef.current = false;
         }
 
-        return () => clearInterval(intervalRef.current);
+        return () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+        };
     }, [isGuiding, destination]);
 
     const captureFrame = useCallback(() => {
         const video = videoRef.current;
-        if (!video || video.videoWidth === 0) return null;
+        if (!video || video.videoWidth === 0) {
+            console.log('Video not ready, width:', video?.videoWidth);
+            return null;
+        }
 
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;

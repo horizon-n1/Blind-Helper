@@ -1,11 +1,13 @@
 import React from 'react';
 
 const StatusBar = ({ status }) => {
-  // Determine the dot style based on status
   let dotClass = '';
   if (status.toLowerCase().includes('listen')) dotClass = 'listening';
   else if (status.toLowerCase().includes('think')) dotClass = 'thinking';
   else if (status.toLowerCase().includes('speak')) dotClass = 'speaking';
+  else if (status.toLowerCase().includes('scan')) dotClass = 'scanning';
+  else if (status.toLowerCase().includes('guid')) dotClass = 'listening';
+  else if (status.toLowerCase().includes('navigat')) dotClass = 'thinking';
 
   return (
     <div className="status-bar">

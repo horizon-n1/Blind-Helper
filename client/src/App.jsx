@@ -71,7 +71,13 @@ function App() {
         setTimeout(() => setObstacle(false), 4000);
       }
 
+      // Set a safety timeout — if ElevenLabs takes more than 8 seconds, unlock
+      const safetyTimeout = setTimeout(() => {
+        isSpeakingRef.current = false;
+      }, 8000);
+
       await speakText(instruction);
+      clearTimeout(safetyTimeout);
       isSpeakingRef.current = false;
 
       if (arrived) {
@@ -83,7 +89,7 @@ function App() {
 
     } catch (err) {
       console.error('Guidance frame error:', err);
-      isSpeakingRef.current = false;
+      isSpeakingRef.current = false; // always unlock on error
     }
   }, []);
 
