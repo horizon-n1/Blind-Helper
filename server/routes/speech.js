@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 
-router.post('/tts', async (req, res) => {
+router.post('/', async (req, res) => {
   const { text } = req.body;
 
   if (!text) {

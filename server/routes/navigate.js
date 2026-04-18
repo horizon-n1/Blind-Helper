@@ -4,7 +4,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-flash-lite-latest" });
 
 const DEMO_MAP = `
 - Entrance: (0,0)
@@ -14,14 +14,14 @@ const DEMO_MAP = `
 `;
 
 router.post('/', async (req, res) => {
-  const { userText } = req.body;
+  const { message } = req.body;
 
   try {
     const prompt = `
       You are a navigation assistant for the blind. 
       Use this map data: ${DEMO_MAP}.
       
-      The user just said: "${userText}"
+      The user just said: "${message}"
       
       Provide a short, clear, 1-2 sentence direction to help them reach their destination.
       Only give the next immediate step or a high-level summary.
@@ -31,7 +31,7 @@ router.post('/', async (req, res) => {
     const response = await result.response;
     const text = response.text();
 
-    res.json({ instruction: text });
+    res.json({ reply: text });
   } catch (error) {
     console.error("Gemini Error:", error);
     res.status(500).json({ error: "Failed to generate navigation" });
