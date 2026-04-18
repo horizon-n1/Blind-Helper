@@ -15,7 +15,7 @@ router.post('/tts', async (req, res) => {
       url: `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
       data: {
         text: text,
-        model_id: "eleven_turbo_v2", // Turbo is faster for real-time apps
+        model_id: "eleven_flash_v2_5", // Turbo is faster for real-time apps
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.8,
