@@ -320,3 +320,144 @@ body {
     box-shadow: 0 0 10px var(--scan-glow);
   }
 }
+
+/* ── Upload Area ───────────────────────────────────── */
+.upload-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 2px dashed rgba(59, 130, 246, 0.4);
+  border-radius: 20px;
+  padding: 2rem;
+  margin: 1rem 0;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  flex-grow: 1;
+}
+
+.upload-area:hover {
+  border-color: var(--accent-color);
+  background: rgba(59, 130, 246, 0.05);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.upload-icon {
+  font-size: 3rem;
+}
+
+.upload-label {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.upload-sub {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+/* ── Scanning Spinner ──────────────────────────────── */
+.scanning-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  flex-grow: 1;
+}
+
+.scan-spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(59, 130, 246, 0.2);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Room List ─────────────────────────────────────── */
+.room-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem 0;
+}
+
+.room-list-label {
+  width: 100%;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 0.25rem;
+}
+
+.room-chip {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 100px;
+  padding: 0.4rem 1rem;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ── Reset Button ──────────────────────────────────── */
+.reset-btn {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reset-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--text-primary);
+}
+
+/* ── Active room chip ──────────────────────────────── */
+.room-chip.active {
+  background: rgba(59, 130, 246, 0.35);
+  border-color: var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* ── Live guidance indicator ───────────────────────── */
+.guiding-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.5rem;
+  color: #10b981;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.guiding-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+  animation: pulse 1.5s infinite;
+}
