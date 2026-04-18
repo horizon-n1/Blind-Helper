@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
 import useCamera from './hooks/useCamera';
 import { getNavigation } from './services/llmService';
@@ -26,34 +26,38 @@ function App() {
   const [reply, setReply] = useState('');
   const [obstacle, setObstacle] = useState(false);
   const isSpeakingRef = useRef(false);
+  const lastInstructionRef = useRef('');
   const fileInputRef = useRef(null);
 
-  // ── Camera hook — passes frame to handleCameraFrame every 3s when guiding
-  const { videoRef, captureFrame } = useCamera(
-    handleCameraFrame,
-    stage === STAGE.GUIDING,
-    destination
-  );
+  // ── Refs for values used inside handleCameraFrame ──
+  // We use refs so the camera callback always has latest values
+  const stageRef = useRef(stage);
+  const roomsRef = useRef(rooms);
+  const summaryRef = useRef(summary);
+  const destinationRef = useRef(destination);
 
-  const { transcript, isListening, error, startListening } = useSpeechRecognition();
+  useEffect(() => { stageRef.current = stage; }, [stage]);
+  useEffect(() => { roomsRef.current = rooms; }, [rooms]);
+  useEffect(() => { summaryRef.current = summary; }, [summary]);
+  useEffect(() => { destinationRef.current = destination; }, [destination]);
 
-  // Track last instruction to avoid repeating
-  const lastInstructionRef = useRef('');
-
-  async function handleCameraFrame(base64Image) {
+  // ── Camera frame handler (defined before useCamera) ──
+  const handleCameraFrame = useCallback(async (base64Image) => {
     if (isSpeakingRef.current) return;
+    if (stageRef.current !== STAGE.GUIDING) return;
 
     try {
       isSpeakingRef.current = true;
 
-      const { instruction, arrived } = await getGuidanceStep(
+      const { instruction, arrived, obstacle: hasObstacle } = await getGuidanceStep(
         base64Image,
-        destination,
-        rooms,
-        summary
+        destinationRef.current,
+        roomsRef.current,
+        summaryRef.current,
+        lastInstructionRef.current
       );
 
-      // Don't repeat the exact same instruction twice in a row
+      // Don't repeat the same instruction
       if (instruction === lastInstructionRef.current) {
         isSpeakingRef.current = false;
         return;
@@ -61,6 +65,12 @@ function App() {
 
       lastInstructionRef.current = instruction;
       setReply(instruction);
+
+      if (hasObstacle) {
+        setObstacle(true);
+        setTimeout(() => setObstacle(false), 4000);
+      }
+
       await speakText(instruction);
       isSpeakingRef.current = false;
 
@@ -75,7 +85,16 @@ function App() {
       console.error('Guidance frame error:', err);
       isSpeakingRef.current = false;
     }
-  }
+  }, []);
+
+  // ── Camera hook ───────────────────────────────────
+  const { videoRef } = useCamera(
+    handleCameraFrame,
+    stage === STAGE.GUIDING,
+    destination
+  );
+
+  const { transcript, isListening, error, startListening } = useSpeechRecognition();
 
   // ── Handle video upload ───────────────────────────
   const handleVideoUpload = async (e) => {
@@ -110,7 +129,6 @@ function App() {
   useEffect(() => {
     if (!transcript) return;
 
-    // Waiting for destination
     if (stage === STAGE.ROOM_LIST) {
       const handleDestination = async () => {
         try {
@@ -124,7 +142,6 @@ function App() {
           setStatus(`Navigating to ${transcript}`);
           await speakText(data.directions);
 
-          // Start real-time camera guidance
           setStage(STAGE.GUIDING);
           setStatus(`Guiding you to ${transcript}...`);
 
@@ -139,7 +156,7 @@ function App() {
       return;
     }
 
-    // Default voice navigation (existing behavior)
+    // Default voice navigation
     const handleSpeech = async () => {
       try {
         setStatus('Thinking...');
@@ -172,13 +189,14 @@ function App() {
   return (
     <div className="app-container">
 
-      {/* Hidden camera stream */}
+      {/* Camera feed — visible when guiding */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        style={{ display: 'none' }}
+        className="camera-feed"
+        style={{ display: stage === STAGE.GUIDING ? 'block' : 'none' }}
       />
 
       {obstacle && <ObstacleAlert />}
@@ -214,7 +232,7 @@ function App() {
         </div>
       )}
 
-      {/* Room list + guiding indicator */}
+      {/* Room list */}
       {(stage === STAGE.ROOM_LIST || stage === STAGE.NAVIGATING || stage === STAGE.GUIDING) && (
         <div className="room-list">
           <p className="room-list-label">Rooms found:</p>
@@ -227,7 +245,6 @@ function App() {
             </div>
           ))}
 
-          {/* Live guidance indicator */}
           {stage === STAGE.GUIDING && (
             <div className="guiding-indicator">
               <div className="guiding-dot" />

@@ -48,7 +48,8 @@ body {
   flex-direction: column;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
+  /* changed from hidden */
 }
 
 .header {
@@ -460,4 +461,15 @@ body {
   background: #10b981;
   box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
   animation: pulse 1.5s infinite;
+}
+
+/* ── Camera Feed ───────────────────────────────────── */
+.camera-feed {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid var(--panel-border);
+  margin-bottom: 1rem;
+  object-fit: cover;
+  max-height: 200px;
+  background: rgba(0, 0, 0, 0.4);
 }
