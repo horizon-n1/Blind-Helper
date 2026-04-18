@@ -27,3 +27,50 @@ To bypass this flaw, a dedicated STM32 or Arduino microcontroller acts as the "M
 ## The Systems Engineering Pitch
 
 Combining an advanced ElevenLabs AI web app on a phone with an immediate embedded hardware safety system on a cane circumvents the latency and edge-case pitfalls typical of software-only approaches. This dual-layer architecture strikes the perfect balance—deploying high-level, cloud-based AI computing for empathetic guidance coupled strictly with low-level, mission-critical hardware timing for uncompromising safety.
+
+---
+
+## Hardware Requirements
+
+*   **Microcontroller:** STM32 or Arduino board (e.g., Arduino Uno/Nano).
+*   **Sensors:** Ultrasonic sensor (e.g., HC-SR04) for edge-level distance checking.
+*   **Actuators:** Haptic vibration motor or piezo buzzer for instantaneous sensory feedback.
+
+## Software Prerequisites
+
+*   [Node.js](https://nodejs.org/en/) (v16 or higher recommended).
+*   An active OpenAI API Key.
+*   An active ElevenLabs API Key and Voice ID.
+
+## Project Structure
+
+```bash
+📦 Blind-Helper
+ ┣ 📂 client       # Frontend Web App utilizing Web Speech API and WebCam
+ ┣ 📂 server       # Node.js Backend handling API routing (OpenAI & ElevenLabs)
+ ┗ 📂 firmware     # Embedded C/C++ Code for the local hardware safety net
+```
+
+## Installation & Setup
+
+**1. Configure Environment Variables**
+Navigate to the `server` directory and ensure your `.env` file contains your credentials (see the existing `.env` file):
+```env
+OPENAI_API_KEY=your_openai_key_here
+ELEVENLABS_API_KEY=your_elevenlabs_key_here
+ELEVENLABS_VOICE_ID=your_voice_id_here
+PORT=3001
+```
+
+**2. Run the Node Backend**
+```bash
+cd server
+npm install
+npm start # or node server.js
+```
+
+**3. Run the Client Web App**
+Launch the web interface by serving the `client` directory. If you are using VS Code, the "Live Server" extension is an easy way to spin this up.
+
+**4. Flash the Hardware Failsafe**
+Open the code within the `firmware` directory using your hardware's IDE (such as Arduino IDE or STM32CubeIDE) and flash it directly to your microcontroller.
