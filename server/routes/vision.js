@@ -10,40 +10,40 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
 
 const waitForFile = async (fileName) => {
-    let file = await fileManager.getFile(fileName);
-    while (file.state === 'PROCESSING') {
-        await new Promise(r => setTimeout(r, 3000));
-        file = await fileManager.getFile(fileName);
-    }
-    if (file.state === 'FAILED') throw new Error('File processing failed');
-    return file;
+  let file = await fileManager.getFile(fileName);
+  while (file.state === 'PROCESSING') {
+    await new Promise(r => setTimeout(r, 3000));
+    file = await fileManager.getFile(fileName);
+  }
+  if (file.state === 'FAILED') throw new Error('File processing failed');
+  return file;
 };
 
 // ── Scan video, build room map + waypoint graph ───────
 router.post('/scan', upload.single('video'), async (req, res) => {
-    const videoPath = req.file?.path;
+  const videoPath = req.file?.path;
 
-    try {
-        const mimeType = req.file.mimetype;
+  try {
+    const mimeType = req.file.mimetype;
 
-        const uploadResult = await fileManager.uploadFile(videoPath, {
-            mimeType,
-            displayName: req.file.originalname
-        });
+    const uploadResult = await fileManager.uploadFile(videoPath, {
+      mimeType,
+      displayName: req.file.originalname
+    });
 
-        const file = await waitForFile(uploadResult.file.name);
-        if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+    const file = await waitForFile(uploadResult.file.name);
+    if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
 
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const result = await model.generateContent([
-            {
-                fileData: {
-                    mimeType: file.mimeType,
-                    fileUri: file.uri
-                }
-            },
-            {
-                text: `You are a navigation assistant for a blind person analyzing a walkthrough video.
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const result = await model.generateContent([
+      {
+        fileData: {
+          mimeType: file.mimeType,
+          fileUri: file.uri
+        }
+      },
+      {
+        text: `You are a navigation assistant for a blind person analyzing a walkthrough video.
 
         STRICT RULES:
         - Only describe what you can ACTUALLY see in this video
@@ -76,20 +76,65 @@ router.post('/scan', upload.single('video'), async (req, res) => {
           ],
           "summary": "From the starting point: [exact physical directions to each room using steps and turns only. Only include paths clearly visible in the video.]"
         }`
-            }
-        ]);
+      }
+    ]);
 
-        const text = result.response.text();
-        const clean = text.replace(/```json|```/g, '').trim();
-        const data = JSON.parse(clean);
+    const text = result.response.text();
+    const clean = text.replace(/```json|```/g, '').trim();
+    const data = JSON.parse(clean);
 
-        res.json(data);
+    res.json(data);
 
-    } catch (err) {
-        if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-        console.error('Vision scan error:', err);
-        res.status(500).json({ error: 'Room scan failed' });
-    }
+  } catch (err) {
+    if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+    console.error('Vision scan error:', err);
+    res.status(500).json({ error: 'Room scan failed' });
+  }
+});
+
+// Add this route to server/routes/vision.js
+
+router.post('/enrich', async (req, res) => {
+  try {
+    const { waypoints, summary, rooms } = req.body;
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }); // or gemini-2.0-flash
+
+    const prompt = `
+You are enriching a navigation map for a blind person.
+You have been given a waypoint graph for an indoor space.
+Your job is to add sensory details to each waypoint so a blind person can confirm their position using non-visual cues.
+
+KNOWN LAYOUT:
+${summary}
+
+KNOWN ROOMS: ${rooms.join(', ')}
+
+CURRENT WAYPOINTS:
+${JSON.stringify(waypoints, null, 2)}
+
+For each waypoint, add these fields:
+- entryCues: { floor (tile/carpet/wood), sound, airflow, touch, smell, stepChange (bool), doorPresent (bool), doorSide, doorState }
+- description: <1-2 sentence spoken arrival announcement, no visual language>
+- landmarks: [{ name, side: "left"|"right"|"center", proximity: "at"|"near" }]
+- exitLabels: { [targetWaypointId]: "<spoken direction to next waypoint>" }
+
+RULES:
+- NEVER use visual language (colors, signs, labels).
+- Use ONLY tactile, auditory, and spatial references.
+- Return ONLY a JSON object: { "enrichedWaypoints": [...] }
+`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const clean = text.replace(/```json|```/g, '').trim();
+    const { enrichedWaypoints } = JSON.parse(clean);
+
+    res.json({ enrichedWaypoints });
+  } catch (err) {
+    console.error('Enrich error:', err);
+    res.status(500).json({ error: 'Enrichment failed' });
+  }
 });
 
 module.exports = router;

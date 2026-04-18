@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { saveLayout, loadLayouts, enrichLayout } from './services/layoutService';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
 import useCamera from './hooks/useCamera';
 import { getNavigation, navigateToRoom, checkProgress } from './services/llmService';
@@ -7,6 +8,8 @@ import { speakText } from './services/elevenLabsService';
 import VoiceButton from './components/VoiceButton';
 import StatusBar from './components/StatusBar';
 import ObstacleAlert from './components/ObstacleAlert';
+import useBuzzerDetector from './hooks/useBuzzerDetector';
+import Demo from './pages/Demo';
 import './App.css';
 
 const STAGE = {
@@ -15,18 +18,6 @@ const STAGE = {
   ROOM_LIST: 'room_list',
   NAVIGATING: 'navigating',
   GUIDING: 'guiding',
-};
-
-const LAYOUTS_KEY = 'blindnav_layouts';
-
-const saveLayout = (buildingName, data) => {
-  const layouts = JSON.parse(localStorage.getItem(LAYOUTS_KEY) || '{}');
-  layouts[buildingName] = { ...data, savedAt: Date.now() };
-  localStorage.setItem(LAYOUTS_KEY, JSON.stringify(layouts));
-};
-
-const loadLayouts = () => {
-  return JSON.parse(localStorage.getItem(LAYOUTS_KEY) || '{}');
 };
 
 function App() {
@@ -38,55 +29,95 @@ function App() {
   const [destination, setDestination] = useState('');
   const [reply, setReply] = useState('');
   const [obstacle, setObstacle] = useState(false);
+  const [obstacleSource, setObstacleSource] = useState('sensor');
   const [savedLayouts, setSavedLayouts] = useState(loadLayouts());
+  const [waypointIndex, setWaypointIndex] = useState(0);
   const [currentPath, setCurrentPath] = useState(null);
-  const [pathStepIndex, setPathStepIndex] = useState(0);
+  const [stepsSinceLastWaypoint, setStepsSinceLastWaypoint] = useState(0);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
 
   const isSpeakingRef = useRef(false);
   const lastInstructionRef = useRef('');
   const handledTranscriptRef = useRef('');
   const fileInputRef = useRef(null);
-  const progressIntervalRef = useRef(null);
-
-  // Refs so camera callback always has latest values
   const stageRef = useRef(stage);
   const roomsRef = useRef(rooms);
   const summaryRef = useRef(summary);
   const destinationRef = useRef(destination);
   const currentPathRef = useRef(currentPath);
-  const pathStepIndexRef = useRef(pathStepIndex);
+  const waypointIndexRef = useRef(0);
+  const stepsSinceLastWaypointRef = useRef(0);
+  const waypointsRef = useRef(waypoints);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { roomsRef.current = rooms; }, [rooms]);
   useEffect(() => { summaryRef.current = summary; }, [summary]);
   useEffect(() => { destinationRef.current = destination; }, [destination]);
   useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
-  useEffect(() => { pathStepIndexRef.current = pathStepIndex; }, [pathStepIndex]);
+  useEffect(() => { waypointIndexRef.current = waypointIndex; }, [waypointIndex]);
+  useEffect(() => { stepsSinceLastWaypointRef.current = stepsSinceLastWaypoint; }, [stepsSinceLastWaypoint]);
+  useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
 
-  // ── Progress check loop ───────────────────────────
-  useEffect(() => {
-    if (stage === STAGE.GUIDING && currentPath) {
-      progressIntervalRef.current = setInterval(async () => {
-        if (isSpeakingRef.current) return;
-        try {
-          const { captureFrame } = useCamera;
-          // progress check uses latest captured frame via ref below
-        } catch (err) {
-          console.error('Progress check error:', err);
-        }
-      }, 15000);
-    } else {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-        progressIntervalRef.current = null;
-      }
-    }
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, [stage, currentPath]);
+  const getCurrentWaypoint = useCallback(() =>
+    currentPathRef.current?.[waypointIndexRef.current] ?? null, []);
 
-  // ── Camera frame handler ──────────────────────────
+  const getNextWaypoint = useCallback(() =>
+    currentPathRef.current?.[waypointIndexRef.current + 1] ?? null, []);
+
+  const advanceWaypoint = useCallback(() => {
+    setWaypointIndex(i => {
+      const path = currentPathRef.current;
+      if (!path) return i;
+      const next = Math.min(i + 1, path.length - 1);
+      console.log(`[nav] waypoint ${i} → ${next} of ${path.length - 1}`);
+      return next;
+    });
+    setStepsSinceLastWaypoint(0);
+    stepsSinceLastWaypointRef.current = 0;
+  }, []);
+
+  const resetNavState = useCallback(() => {
+    setCurrentPath(null);
+    setWaypointIndex(0);
+    setStepsSinceLastWaypoint(0);
+    stepsSinceLastWaypointRef.current = 0;
+    lastInstructionRef.current = '';
+    isSpeakingRef.current = false;
+  }, []);
+
+  // ── Buzzer detection handler ──────────────────────────
+  const handleBuzzerDetected = useCallback(async () => {
+    // Don't interrupt if already speaking
+    if (isSpeakingRef.current) return;
+
+    console.log('[buzzer] Hardware obstacle detected!');
+
+    // Flash the obstacle alert
+    setObstacle(true);
+    setObstacleSource('sensor');
+    setTimeout(() => setObstacle(false), 4000);
+
+    // Speak the warning
+    isSpeakingRef.current = true;
+    const warning = 'Stop. Obstacle detected by sensor.';
+    setReply(warning);
+    lastInstructionRef.current = warning;
+
+    const safetyTimeout = setTimeout(() => {
+      isSpeakingRef.current = false;
+    }, 8000);
+
+    await speakText(warning);
+    clearTimeout(safetyTimeout);
+    isSpeakingRef.current = false;
+  }, []);
+
+  // ── Buzzer detector hook ──────────────────────────────
+  // Active whenever the app is open — hardware safety layer
+  // runs independently of navigation stage
+  useBuzzerDetector(handleBuzzerDetected, true);
+
   const handleCameraFrame = useCallback(async (base64Image) => {
     if (isSpeakingRef.current) return;
     if (stageRef.current !== STAGE.GUIDING) return;
@@ -94,13 +125,31 @@ function App() {
     try {
       isSpeakingRef.current = true;
 
-      const { instruction, arrived, obstacle: hasObstacle } = await getGuidanceStep(
+      const {
+        instruction,
+        arrived,
+        arrivedAtWaypoint,
+        obstacle: hasObstacle,
+        _debug,
+      } = await getGuidanceStep(
         base64Image,
         destinationRef.current,
         roomsRef.current,
         summaryRef.current,
-        lastInstructionRef.current
+        lastInstructionRef.current,
+        getCurrentWaypoint(),
+        getNextWaypoint(),
+        waypointIndexRef.current,
+        stepsSinceLastWaypointRef.current,
       );
+
+      if (_debug) {
+        console.log(
+          `[guide] action=${_debug.action} conf=${_debug.confidence} ` +
+          `steps=${_debug.stepsSinceLastWaypoint}/${_debug.expectedSteps} ` +
+          `plausible=${_debug.stepCountPlausible} gate=${_debug.gatePassed}`
+        );
+      }
 
       if (instruction === lastInstructionRef.current) {
         isSpeakingRef.current = false;
@@ -112,12 +161,21 @@ function App() {
 
       if (hasObstacle) {
         setObstacle(true);
+        setObstacleSource('camera');
         setTimeout(() => setObstacle(false), 4000);
       }
 
-      // Advance path step index on non-obstacle instructions
-      if (!hasObstacle && currentPathRef.current) {
-        setPathStepIndex(i => Math.min(i + 1, currentPathRef.current.length - 1));
+      if (arrivedAtWaypoint) {
+        advanceWaypoint();
+      } else if (!hasObstacle && !arrived) {
+        setStepsSinceLastWaypoint(n => n + 1);
+        stepsSinceLastWaypointRef.current += 1;
+      }
+
+      if (currentPathRef.current) {
+        const total = currentPathRef.current.length;
+        const current = waypointIndexRef.current + 1;
+        setStatus(`Step ${current} of ${total} → ${destinationRef.current}`);
       }
 
       const safetyTimeout = setTimeout(() => {
@@ -131,9 +189,7 @@ function App() {
       if (arrived) {
         setStage(STAGE.ROOM_LIST);
         setDestination('');
-        setCurrentPath(null);
-        setPathStepIndex(0);
-        lastInstructionRef.current = '';
+        resetNavState();
         setStatus('You have arrived! Say another room to navigate there.');
       }
 
@@ -141,16 +197,16 @@ function App() {
       console.error('Guidance frame error:', err);
       isSpeakingRef.current = false;
     }
-  }, []);
+  }, [getCurrentWaypoint, getNextWaypoint, advanceWaypoint, resetNavState]);
 
-  // ── Camera hook ───────────────────────────────────
   const { videoRef, captureFrame } = useCamera(
     handleCameraFrame,
     stage === STAGE.GUIDING,
     destination
   );
 
-  // ── Progress check using captureFrame ────────────
+  const { transcript, isListening, error, startListening } = useSpeechRecognition();
+
   useEffect(() => {
     if (stage !== STAGE.GUIDING || !currentPath) return;
 
@@ -164,7 +220,7 @@ function App() {
           frame,
           destinationRef.current,
           currentPathRef.current,
-          pathStepIndexRef.current,
+          waypointIndexRef.current,
           summaryRef.current
         );
 
@@ -189,9 +245,6 @@ function App() {
     return () => clearInterval(interval);
   }, [stage, currentPath, captureFrame]);
 
-  const { transcript, isListening, error, startListening } = useSpeechRecognition();
-
-  // ── Handle video upload ───────────────────────────
   const handleVideoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -201,21 +254,23 @@ function App() {
       setStatus('Analyzing your space... this may take 30 seconds');
       setReply('');
 
-      const data = await scanVideo(file);
-      setRooms(data.rooms);
-      setSummary(data.summary);
-      setWaypoints(data.waypoints || []);
+      const baseData = await scanVideo(file);
+
+      setStatus('Adding sensory details...');
+      const enrichedData = await enrichLayout(baseData);
+
+      setRooms(enrichedData.rooms);
+      setSummary(enrichedData.summary);
+      setWaypoints(enrichedData.waypoints || []);
       setStage(STAGE.ROOM_LIST);
 
-      // Prompt to save layout
-      const buildingName = window.prompt('Name this location for future use (e.g. Home, Office):');
+      const buildingName = window.prompt('Name this location (e.g. Home, Office):');
       if (buildingName?.trim()) {
-        saveLayout(buildingName.trim(), data);
+        saveLayout(buildingName.trim(), enrichedData);
         setSavedLayouts(loadLayouts());
       }
 
-      const roomList = data.rooms.join(', ');
-      const spoken = `I found the following areas: ${roomList}. Where would you like to go? Press the microphone and say the room name.`;
+      const spoken = `I found the following areas: ${enrichedData.rooms.join(', ')}. Where would you like to go?`;
       setStatus('Where would you like to go?');
       setReply(spoken);
       await speakText(spoken);
@@ -227,7 +282,6 @@ function App() {
     }
   };
 
-  // ── Load saved layout ─────────────────────────────
   const handleLoadLayout = async (name) => {
     const data = loadLayouts()[name];
     if (!data) return;
@@ -243,80 +297,57 @@ function App() {
     await speakText(spoken);
   };
 
-  // ── Handle voice input ────────────────────────────
+  const startNavigation = useCallback(async (dest) => {
+    try {
+      setDestination(dest);
+      setStage(STAGE.NAVIGATING);
+      setStatus(`Getting directions to ${dest}...`);
+      resetNavState();
+
+      const data = await navigateToRoom(
+        dest,
+        roomsRef.current,
+        summaryRef.current,
+        waypointsRef.current
+      );
+
+      setReply(data.directions);
+
+      if (data.path?.length) {
+        setCurrentPath(data.path);
+        currentPathRef.current = data.path;
+        setWaypointIndex(0);
+        waypointIndexRef.current = 0;
+        setStepsSinceLastWaypoint(0);
+        stepsSinceLastWaypointRef.current = 0;
+      }
+
+      setStatus(`Step 1 of ${data.totalSteps ?? '?'} → ${dest}`);
+      await speakText(data.directions);
+      setStage(STAGE.GUIDING);
+
+    } catch (err) {
+      console.error(err);
+      setStatus('Navigation failed — try again');
+      setStage(STAGE.ROOM_LIST);
+    }
+  }, [resetNavState]);
+
   useEffect(() => {
     if (!transcript) return;
     if (transcript === handledTranscriptRef.current) return;
     handledTranscriptRef.current = transcript;
 
     if (stage === STAGE.ROOM_LIST) {
-      const handleDestination = async () => {
-        try {
-          setDestination(transcript);
-          setStage(STAGE.NAVIGATING);
-          setStatus(`Getting directions to ${transcript}...`);
-
-          const data = await navigateToRoom(transcript, rooms, summary, waypoints);
-          setReply(data.directions);
-          if (data.path) {
-            setCurrentPath(data.path);
-            setPathStepIndex(0);
-          }
-
-          setStatus(`Navigating to ${transcript}`);
-          await speakText(data.directions);
-
-          setStage(STAGE.GUIDING);
-          setStatus(`Guiding you to ${transcript}...`);
-
-        } catch (err) {
-          console.error(err);
-          setStatus('Navigation failed — try again');
-          setStage(STAGE.ROOM_LIST);
-        }
-      };
-
-      handleDestination();
+      startNavigation(transcript);
       return;
     }
 
     if (stage === STAGE.GUIDING) {
-      const lowerTranscript = transcript.toLowerCase();
-      const matchedRoom = rooms.find(room =>
-        lowerTranscript.includes(room.toLowerCase())
-      );
-
-      if (matchedRoom) {
-        const handleNewDestination = async () => {
-          try {
-            setDestination(matchedRoom);
-            setStage(STAGE.NAVIGATING);
-            setStatus(`Rerouting to ${matchedRoom}...`);
-            lastInstructionRef.current = '';
-            isSpeakingRef.current = false;
-            setCurrentPath(null);
-            setPathStepIndex(0);
-
-            const data = await navigateToRoom(matchedRoom, rooms, summary, waypoints);
-            setReply(data.directions);
-            if (data.path) {
-              setCurrentPath(data.path);
-              setPathStepIndex(0);
-            }
-
-            setStatus(`Navigating to ${matchedRoom}`);
-            await speakText(data.directions);
-
-            setStage(STAGE.GUIDING);
-            setStatus(`Guiding you to ${matchedRoom}...`);
-          } catch (err) {
-            console.error(err);
-            setStatus('Reroute failed — try again');
-            setStage(STAGE.GUIDING);
-          }
-        };
-
-        handleNewDestination();
+      const lower = transcript.toLowerCase();
+      const matched = rooms.find(r => lower.includes(r.toLowerCase()));
+      if (matched) {
+        startNavigation(matched);
         return;
       }
     }
@@ -327,7 +358,6 @@ function App() {
           setStatus('Thinking...');
           const data = await getNavigation(transcript);
           setReply(data.reply);
-          setStatus('Speaking...');
           await speakText(data.reply);
           setStatus('Ready to guide');
         } catch (err) {
@@ -335,13 +365,10 @@ function App() {
           setStatus('Error — please try again');
         }
       };
-
       handleSpeech();
     }
+  }, [transcript, stage, rooms, startNavigation]);
 
-  }, [transcript]);
-
-  // ── Spacebar shortcut ─────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && !isListening) {
@@ -353,7 +380,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isListening, startListening]);
 
-  // ── Reset ─────────────────────────────────────────
   const handleReset = () => {
     setStage(STAGE.IDLE);
     setRooms([]);
@@ -361,16 +387,40 @@ function App() {
     setWaypoints([]);
     setDestination('');
     setReply('');
-    setCurrentPath(null);
-    setPathStepIndex(0);
-    lastInstructionRef.current = '';
+    resetNavState();
     handledTranscriptRef.current = '';
-    isSpeakingRef.current = false;
     setStatus('Upload a video or load a saved location');
   };
 
+  const totalSteps = currentPath?.length ?? 0;
+  const currentStepDisplay = totalSteps > 0 ? waypointIndex + 1 : null;
+
+  if (isDemoMode) {
+    return <Demo onExit={() => setIsDemoMode(false)} />;
+  }
+
+
   return (
     <div className="app-container">
+      <button
+        onClick={() => setIsDemoMode(true)}
+        style={{
+          position: 'absolute',
+          top: '1.5rem',
+          right: '1.5rem',
+          background: 'rgba(59, 130, 246, 0.15)',
+          border: '1px solid rgba(59, 130, 246, 0.35)',
+          color: 'var(--text-primary)',
+          borderRadius: '8px',
+          padding: '0.4rem 0.8rem',
+          cursor: 'pointer',
+          fontSize: '0.8rem',
+          fontWeight: '600',
+          zIndex: 10,
+        }}
+      >
+        Demo
+      </button>
 
       <video
         ref={videoRef}
@@ -381,7 +431,7 @@ function App() {
         style={{ display: stage === STAGE.GUIDING ? 'block' : 'none' }}
       />
 
-      {obstacle && <ObstacleAlert />}
+      {obstacle && <ObstacleAlert source={obstacleSource} />}
 
       <div className="header">
         <h1>BlindNav</h1>
@@ -433,10 +483,7 @@ function App() {
         <div className="room-list">
           <p className="room-list-label">Rooms found:</p>
           {rooms.map((room, i) => (
-            <div
-              key={i}
-              className={`room-chip ${destination === room ? 'active' : ''}`}
-            >
+            <div key={i} className={`room-chip ${destination === room ? 'active' : ''}`}>
               {room}
             </div>
           ))}
@@ -444,7 +491,11 @@ function App() {
           {stage === STAGE.GUIDING && (
             <div className="guiding-indicator">
               <div className="guiding-dot" />
-              <span>Live guidance active</span>
+              <span>
+                {currentStepDisplay && totalSteps > 0
+                  ? `Step ${currentStepDisplay} of ${totalSteps}`
+                  : 'Live guidance active'}
+              </span>
             </div>
           )}
 
