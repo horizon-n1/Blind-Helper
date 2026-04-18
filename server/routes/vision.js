@@ -19,7 +19,7 @@ const waitForFile = async (fileName) => {
     return file;
 };
 
-// ── Scan video, build room map ────────────────────────
+// ── Scan video, build room map + waypoint graph ───────
 router.post('/scan', upload.single('video'), async (req, res) => {
     const videoPath = req.file?.path;
 
@@ -46,18 +46,35 @@ router.post('/scan', upload.single('video'), async (req, res) => {
                 text: `You are a navigation assistant for a blind person analyzing a walkthrough video.
 
         STRICT RULES:
-        - Only describe what you can ACTUALLY see in this video.
-        - NEVER invent rooms, distances, or directions not visible in the video.
-        - If a room or path is unclear, say "unclear" for that part.
-        - Distances in steps only (1 step = about 2.5 feet).
-        - All directions relative to where the video starts.
-        - NEVER use visual descriptions like colors, signs, or labels.
-        - Only describe physical layout: connections between rooms and step counts.
+        - Only describe what you can ACTUALLY see in this video
+        - NEVER invent rooms, distances, or connections not visible
+        - Distances in steps only (1 step = about 2.5 feet)
+        - NEVER use visual descriptions like colors, signs, or labels
+        - If something is unclear mark it as "unclear"
+        - Every room must appear as both a waypoint and in the rooms array
+        - Every connection must have a reverse connection
 
         Respond ONLY with this exact JSON, no extra text:
         {
           "rooms": ["only rooms clearly visible in the video"],
-          "summary": "From the starting point: [exact physical directions to each room using steps and turns only. Example: Walking straight 8 steps reaches the living room. Turning left from the start and walking 5 steps reaches the hallway. The bathroom is at the end of that hallway, 6 more steps forward.] Only include paths clearly visible in the video."
+          "waypoints": [
+            {
+              "id": "wp1",
+              "name": "starting point",
+              "connections": [
+                { "to": "wp2", "steps": 5, "direction": "forward" }
+              ]
+            },
+            {
+              "id": "wp2",
+              "name": "hallway junction",
+              "connections": [
+                { "to": "wp1", "steps": 5, "direction": "back" },
+                { "to": "wp3", "steps": 3, "direction": "left" }
+              ]
+            }
+          ],
+          "summary": "From the starting point: [exact physical directions to each room using steps and turns only. Only include paths clearly visible in the video.]"
         }`
             }
         ]);

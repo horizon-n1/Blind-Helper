@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
 import useCamera from './hooks/useCamera';
-import { getNavigation, navigateToRoom } from './services/llmService';
+import { getNavigation, navigateToRoom, checkProgress } from './services/llmService';
 import { scanVideo, getGuidanceStep } from './services/visionService';
 import { speakText } from './services/elevenLabsService';
 import VoiceButton from './components/VoiceButton';
@@ -17,30 +17,74 @@ const STAGE = {
   GUIDING: 'guiding',
 };
 
+const LAYOUTS_KEY = 'blindnav_layouts';
+
+const saveLayout = (buildingName, data) => {
+  const layouts = JSON.parse(localStorage.getItem(LAYOUTS_KEY) || '{}');
+  layouts[buildingName] = { ...data, savedAt: Date.now() };
+  localStorage.setItem(LAYOUTS_KEY, JSON.stringify(layouts));
+};
+
+const loadLayouts = () => {
+  return JSON.parse(localStorage.getItem(LAYOUTS_KEY) || '{}');
+};
+
 function App() {
   const [stage, setStage] = useState(STAGE.IDLE);
-  const [status, setStatus] = useState('Upload a video of your space to begin');
+  const [status, setStatus] = useState('Upload a video or load a saved location');
   const [rooms, setRooms] = useState([]);
   const [summary, setSummary] = useState('');
+  const [waypoints, setWaypoints] = useState([]);
   const [destination, setDestination] = useState('');
   const [reply, setReply] = useState('');
   const [obstacle, setObstacle] = useState(false);
+  const [savedLayouts, setSavedLayouts] = useState(loadLayouts());
+  const [currentPath, setCurrentPath] = useState(null);
+  const [pathStepIndex, setPathStepIndex] = useState(0);
 
   const isSpeakingRef = useRef(false);
   const lastInstructionRef = useRef('');
-  const handledTranscriptRef = useRef('');  // ← prevents double-firing
+  const handledTranscriptRef = useRef('');
   const fileInputRef = useRef(null);
+  const progressIntervalRef = useRef(null);
 
   // Refs so camera callback always has latest values
   const stageRef = useRef(stage);
   const roomsRef = useRef(rooms);
   const summaryRef = useRef(summary);
   const destinationRef = useRef(destination);
+  const currentPathRef = useRef(currentPath);
+  const pathStepIndexRef = useRef(pathStepIndex);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { roomsRef.current = rooms; }, [rooms]);
   useEffect(() => { summaryRef.current = summary; }, [summary]);
   useEffect(() => { destinationRef.current = destination; }, [destination]);
+  useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
+  useEffect(() => { pathStepIndexRef.current = pathStepIndex; }, [pathStepIndex]);
+
+  // ── Progress check loop ───────────────────────────
+  useEffect(() => {
+    if (stage === STAGE.GUIDING && currentPath) {
+      progressIntervalRef.current = setInterval(async () => {
+        if (isSpeakingRef.current) return;
+        try {
+          const { captureFrame } = useCamera;
+          // progress check uses latest captured frame via ref below
+        } catch (err) {
+          console.error('Progress check error:', err);
+        }
+      }, 15000);
+    } else {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+  }, [stage, currentPath]);
 
   // ── Camera frame handler ──────────────────────────
   const handleCameraFrame = useCallback(async (base64Image) => {
@@ -71,7 +115,11 @@ function App() {
         setTimeout(() => setObstacle(false), 4000);
       }
 
-      // Set a safety timeout — if ElevenLabs takes more than 8 seconds, unlock
+      // Advance path step index on non-obstacle instructions
+      if (!hasObstacle && currentPathRef.current) {
+        setPathStepIndex(i => Math.min(i + 1, currentPathRef.current.length - 1));
+      }
+
       const safetyTimeout = setTimeout(() => {
         isSpeakingRef.current = false;
       }, 8000);
@@ -83,22 +131,63 @@ function App() {
       if (arrived) {
         setStage(STAGE.ROOM_LIST);
         setDestination('');
+        setCurrentPath(null);
+        setPathStepIndex(0);
         lastInstructionRef.current = '';
         setStatus('You have arrived! Say another room to navigate there.');
       }
 
     } catch (err) {
       console.error('Guidance frame error:', err);
-      isSpeakingRef.current = false; // always unlock on error
+      isSpeakingRef.current = false;
     }
   }, []);
 
   // ── Camera hook ───────────────────────────────────
-  const { videoRef } = useCamera(
+  const { videoRef, captureFrame } = useCamera(
     handleCameraFrame,
     stage === STAGE.GUIDING,
     destination
   );
+
+  // ── Progress check using captureFrame ────────────
+  useEffect(() => {
+    if (stage !== STAGE.GUIDING || !currentPath) return;
+
+    const interval = setInterval(async () => {
+      if (isSpeakingRef.current) return;
+      const frame = captureFrame();
+      if (!frame) return;
+
+      try {
+        const { offTrack, correction } = await checkProgress(
+          frame,
+          destinationRef.current,
+          currentPathRef.current,
+          pathStepIndexRef.current,
+          summaryRef.current
+        );
+
+        if (offTrack && correction) {
+          isSpeakingRef.current = true;
+          setReply(correction);
+          lastInstructionRef.current = correction;
+
+          const safetyTimeout = setTimeout(() => {
+            isSpeakingRef.current = false;
+          }, 8000);
+
+          await speakText(correction);
+          clearTimeout(safetyTimeout);
+          isSpeakingRef.current = false;
+        }
+      } catch (err) {
+        console.error('Progress check error:', err);
+      }
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [stage, currentPath, captureFrame]);
 
   const { transcript, isListening, error, startListening } = useSpeechRecognition();
 
@@ -115,13 +204,20 @@ function App() {
       const data = await scanVideo(file);
       setRooms(data.rooms);
       setSummary(data.summary);
+      setWaypoints(data.waypoints || []);
       setStage(STAGE.ROOM_LIST);
+
+      // Prompt to save layout
+      const buildingName = window.prompt('Name this location for future use (e.g. Home, Office):');
+      if (buildingName?.trim()) {
+        saveLayout(buildingName.trim(), data);
+        setSavedLayouts(loadLayouts());
+      }
 
       const roomList = data.rooms.join(', ');
       const spoken = `I found the following areas: ${roomList}. Where would you like to go? Press the microphone and say the room name.`;
       setStatus('Where would you like to go?');
       setReply(spoken);
-
       await speakText(spoken);
 
     } catch (err) {
@@ -131,13 +227,28 @@ function App() {
     }
   };
 
+  // ── Load saved layout ─────────────────────────────
+  const handleLoadLayout = async (name) => {
+    const data = loadLayouts()[name];
+    if (!data) return;
+
+    setRooms(data.rooms);
+    setSummary(data.summary);
+    setWaypoints(data.waypoints || []);
+    setStage(STAGE.ROOM_LIST);
+
+    const spoken = `Loaded ${name}. I found: ${data.rooms.join(', ')}. Where would you like to go?`;
+    setStatus('Where would you like to go?');
+    setReply(spoken);
+    await speakText(spoken);
+  };
+
   // ── Handle voice input ────────────────────────────
   useEffect(() => {
     if (!transcript) return;
-    if (transcript === handledTranscriptRef.current) return; // already handled
+    if (transcript === handledTranscriptRef.current) return;
     handledTranscriptRef.current = transcript;
 
-    // Waiting for destination after room scan
     if (stage === STAGE.ROOM_LIST) {
       const handleDestination = async () => {
         try {
@@ -145,8 +256,12 @@ function App() {
           setStage(STAGE.NAVIGATING);
           setStatus(`Getting directions to ${transcript}...`);
 
-          const data = await navigateToRoom(transcript, rooms, summary);
+          const data = await navigateToRoom(transcript, rooms, summary, waypoints);
           setReply(data.directions);
+          if (data.path) {
+            setCurrentPath(data.path);
+            setPathStepIndex(0);
+          }
 
           setStatus(`Navigating to ${transcript}`);
           await speakText(data.directions);
@@ -165,7 +280,6 @@ function App() {
       return;
     }
 
-    // While guiding — allow user to change destination
     if (stage === STAGE.GUIDING) {
       const lowerTranscript = transcript.toLowerCase();
       const matchedRoom = rooms.find(room =>
@@ -180,9 +294,15 @@ function App() {
             setStatus(`Rerouting to ${matchedRoom}...`);
             lastInstructionRef.current = '';
             isSpeakingRef.current = false;
+            setCurrentPath(null);
+            setPathStepIndex(0);
 
-            const data = await navigateToRoom(matchedRoom, rooms, summary);
+            const data = await navigateToRoom(matchedRoom, rooms, summary, waypoints);
             setReply(data.directions);
+            if (data.path) {
+              setCurrentPath(data.path);
+              setPathStepIndex(0);
+            }
 
             setStatus(`Navigating to ${matchedRoom}`);
             await speakText(data.directions);
@@ -201,7 +321,6 @@ function App() {
       }
     }
 
-    // Default — only when IDLE
     if (stage === STAGE.IDLE) {
       const handleSpeech = async () => {
         try {
@@ -234,6 +353,22 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isListening, startListening]);
 
+  // ── Reset ─────────────────────────────────────────
+  const handleReset = () => {
+    setStage(STAGE.IDLE);
+    setRooms([]);
+    setSummary('');
+    setWaypoints([]);
+    setDestination('');
+    setReply('');
+    setCurrentPath(null);
+    setPathStepIndex(0);
+    lastInstructionRef.current = '';
+    handledTranscriptRef.current = '';
+    isSpeakingRef.current = false;
+    setStatus('Upload a video or load a saved location');
+  };
+
   return (
     <div className="app-container">
 
@@ -256,18 +391,35 @@ function App() {
       <StatusBar status={isListening ? 'Listening...' : status} />
 
       {stage === STAGE.IDLE && (
-        <div className="upload-area" onClick={() => fileInputRef.current.click()}>
-          <div className="upload-icon">🎥</div>
-          <p className="upload-label">Tap to upload a video of your space</p>
-          <p className="upload-sub">MP4, MOV, or WebM</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/*"
-            onChange={handleVideoUpload}
-            style={{ display: 'none' }}
-          />
-        </div>
+        <>
+          <div className="upload-area" onClick={() => fileInputRef.current.click()}>
+            <div className="upload-icon">🎥</div>
+            <p className="upload-label">Tap to upload a video of your space</p>
+            <p className="upload-sub">MP4, MOV, or WebM</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              onChange={handleVideoUpload}
+              style={{ display: 'none' }}
+            />
+          </div>
+
+          {Object.keys(savedLayouts).length > 0 && (
+            <div className="saved-layouts">
+              <p className="room-list-label">Saved locations:</p>
+              {Object.entries(savedLayouts).map(([name]) => (
+                <button
+                  key={name}
+                  className="room-chip"
+                  onClick={() => handleLoadLayout(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {stage === STAGE.SCANNING && (
@@ -296,17 +448,7 @@ function App() {
             </div>
           )}
 
-          <button className="reset-btn" onClick={() => {
-            setStage(STAGE.IDLE);
-            setRooms([]);
-            setSummary('');
-            setDestination('');
-            setReply('');
-            lastInstructionRef.current = '';
-            handledTranscriptRef.current = '';
-            isSpeakingRef.current = false;
-            setStatus('Upload a video of your space to begin');
-          }}>
+          <button className="reset-btn" onClick={handleReset}>
             Upload New Video
           </button>
         </div>

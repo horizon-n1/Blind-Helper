@@ -11,10 +11,23 @@ export const getNavigation = async (userSpeech) => {
 };
 
 // Navigate to a specific room using the scanned map
-export const navigateToRoom = async (destination, rooms, summary) => {
+export const navigateToRoom = async (destination, rooms, summary, waypoints) => {
     const response = await axios.post(`${API_BASE}/api/navigate/to-room`, {
         destination,
         rooms,
+        summary,
+        waypoints
+    });
+    return response.data;
+};
+
+// Check if user is still on track
+export const checkProgress = async (image, destination, path, stepIndex, summary) => {
+    const response = await axios.post(`${API_BASE}/api/navigate/check-progress`, {
+        image,
+        destination,
+        path,
+        stepIndex,
         summary
     });
     return response.data;
