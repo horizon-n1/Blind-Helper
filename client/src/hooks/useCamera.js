@@ -68,7 +68,7 @@ const useCamera = (onFrame, isGuiding, destination) => {
                 } finally {
                     isProcessingRef.current = false;
                 }
-            }, 4000); // every 4 seconds
+            }, 5000); // every 5 seconds
 
         } else {
             console.log('Stopping camera guidance loop');

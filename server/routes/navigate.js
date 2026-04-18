@@ -36,13 +36,12 @@ router.post('/to-room', async (req, res) => {
       You are a navigation assistant for a completely blind person.
 
       STRICT RULES:
-      - NEVER describe anything visual. The user is blind.
-      - NEVER mention colors, signs, labels, numbers, or appearances.
-      - ONLY use physical movement commands.
-      - ONLY use information from the layout below. Do NOT invent paths.
-      - If the destination is not in the layout say: "I could not find that room in the scanned area. Please try another room."
-      - Maximum 3 sentences.
-      - Speak directly to the user.
+      - Use ONLY physical movement words: forward, left, right, back, steps, turn
+      - NEVER mention colors, signs, labels, or visual landmarks
+      - ONLY use paths described in the layout below — do NOT invent routes
+      - Give step counts where the layout provides them
+      - If the destination is not listed, say: "I could not find that room in the scanned area."
+      - Maximum 3 sentences. Speak directly to the user.
 
       Known layout:
       ${summary}
@@ -50,8 +49,7 @@ router.post('/to-room', async (req, res) => {
       Known rooms: ${rooms.join(', ')}
       Destination: ${destination}
 
-      Give opening physical directions to start moving toward the ${destination}.
-      Only use the known layout above. Do not invent anything.
+      Give opening movement instructions toward ${destination} using only the layout above.
     `);
 
     const directions = result.response.text();
@@ -73,39 +71,31 @@ router.post('/guide', async (req, res) => {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent([
       {
-        text: `You are a real-time navigation and obstacle detection assistant for a completely blind person.
+        text: `You are a real-time navigation assistant for a completely blind person.
 
-        YOU HAVE TWO JOBS — check in this order:
+        PRIORITY 1 — OBSTACLE DETECTION (always check first):
+        Scan the camera frame right now. Is any object within 6 feet of the camera?
+        - Furniture, people, pets, floor objects, steps, walls, closed doors
 
-        JOB 1 — OBSTACLE DETECTION (check this first, every time):
-        Look at the camera frame RIGHT NOW. Is anything within 6 feet?
-        - Furniture: chairs, tables, couches, shelves
-        - People or pets
-        - Objects on floor: bags, shoes, cables, rugs
-        - Steps or stairs
-        - Walls or closed doors directly ahead
-
-        If YES: "Stop. [obstacle location: left, right, or center]. [one action: step left, step right, or wait]"
+        If YES → respond EXACTLY: "Stop. [left/right/center]. [step left / step right / wait]"
         Example: "Stop. Chair on the right. Step left."
 
-        JOB 2 — NAVIGATION (only if no obstacle):
-        Give the next single physical movement toward the destination.
+        PRIORITY 2 — NAVIGATION (only when no obstacle):
+        Using the known layout below, give ONE physical movement instruction toward ${destination}.
 
         STRICT RULES:
-        - NEVER describe visual things (colors, signs, labels).
-        - NEVER invent obstacles not clearly in the frame.
-        - NEVER repeat the last instruction.
-        - Maximum 10 words.
-        - ONE instruction only.
-        - Only describe what you actually see.
+        - Use ONLY: forward, left, right, back — no visual references
+        - Count steps when turning or moving (e.g. "Turn left, walk 3 steps")
+        - NEVER repeat the last instruction: "${lastInstruction || 'none'}"
+        - NEVER invent paths not in the layout
+        - MAX 10 words
+        - ONE instruction only
 
         Known layout: ${summary}
-        Rooms: ${rooms.join(', ')}
+        Known rooms: ${rooms.join(', ')}
         Destination: ${destination}
-        Last instruction: "${lastInstruction || 'none yet'}"
-        User has completed the last instruction. Give only the next one.
 
-        If user has reached ${destination} say exactly:
+        If the destination is clearly visible and reachable say EXACTLY:
         "You have arrived at your destination"`
       },
       {
