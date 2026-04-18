@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
-// Stage 1 — upload video, get rooms back
+// Scan video — get room map
 export const scanVideo = async (videoFile) => {
     const formData = new FormData();
     formData.append('video', videoFile);
@@ -11,29 +11,17 @@ export const scanVideo = async (videoFile) => {
     });
 
     if (!response.ok) throw new Error('Video scan failed');
-    return response.json(); // { rooms: [...], summary: "..." }
+    return response.json();
 };
 
-// Stage 2 — get initial directions
-export const navigateToRoom = async (destination, rooms, summary) => {
-    const response = await fetch(`${API_BASE}/api/vision/navigate`, {
+// Get real-time guidance step — now hits navigate route
+export const getGuidanceStep = async (image, destination, rooms, summary, lastInstruction) => {
+    const response = await fetch(`${API_BASE}/api/navigate/guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ destination, rooms, summary })
-    });
-
-    if (!response.ok) throw new Error('Navigation failed');
-    return response.json(); // { directions: "..." }
-};
-
-// Stage 3 — real-time guidance from camera frame
-export const getGuidanceStep = async (image, destination, rooms, summary) => {
-    const response = await fetch(`${API_BASE}/api/vision/guide`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, destination, rooms, summary })
+        body: JSON.stringify({ image, destination, rooms, summary, lastInstruction })
     });
 
     if (!response.ok) throw new Error('Guidance failed');
-    return response.json(); // { instruction: "Turn left", arrived: false }
+    return response.json();
 };

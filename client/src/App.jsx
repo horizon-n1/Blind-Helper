@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
 import useCamera from './hooks/useCamera';
-import { getNavigation } from './services/llmService';
+import { getNavigation, navigateToRoom } from './services/llmService';
+import { scanVideo, getGuidanceStep } from './services/visionService';
 import { speakText } from './services/elevenLabsService';
-import { scanVideo, navigateToRoom, getGuidanceStep } from './services/visionService';
 import VoiceButton from './components/VoiceButton';
 import StatusBar from './components/StatusBar';
 import ObstacleAlert from './components/ObstacleAlert';
@@ -25,12 +25,13 @@ function App() {
   const [destination, setDestination] = useState('');
   const [reply, setReply] = useState('');
   const [obstacle, setObstacle] = useState(false);
+
   const isSpeakingRef = useRef(false);
   const lastInstructionRef = useRef('');
+  const handledTranscriptRef = useRef('');  // ← prevents double-firing
   const fileInputRef = useRef(null);
 
-  // ── Refs for values used inside handleCameraFrame ──
-  // We use refs so the camera callback always has latest values
+  // Refs so camera callback always has latest values
   const stageRef = useRef(stage);
   const roomsRef = useRef(rooms);
   const summaryRef = useRef(summary);
@@ -41,7 +42,7 @@ function App() {
   useEffect(() => { summaryRef.current = summary; }, [summary]);
   useEffect(() => { destinationRef.current = destination; }, [destination]);
 
-  // ── Camera frame handler (defined before useCamera) ──
+  // ── Camera frame handler ──────────────────────────
   const handleCameraFrame = useCallback(async (base64Image) => {
     if (isSpeakingRef.current) return;
     if (stageRef.current !== STAGE.GUIDING) return;
@@ -57,7 +58,6 @@ function App() {
         lastInstructionRef.current
       );
 
-      // Don't repeat the same instruction
       if (instruction === lastInstructionRef.current) {
         isSpeakingRef.current = false;
         return;
@@ -128,7 +128,10 @@ function App() {
   // ── Handle voice input ────────────────────────────
   useEffect(() => {
     if (!transcript) return;
+    if (transcript === handledTranscriptRef.current) return; // already handled
+    handledTranscriptRef.current = transcript;
 
+    // Waiting for destination after room scan
     if (stage === STAGE.ROOM_LIST) {
       const handleDestination = async () => {
         try {
@@ -156,22 +159,61 @@ function App() {
       return;
     }
 
-    // Default voice navigation
-    const handleSpeech = async () => {
-      try {
-        setStatus('Thinking...');
-        const data = await getNavigation(transcript);
-        setReply(data.reply);
-        setStatus('Speaking...');
-        await speakText(data.reply);
-        setStatus('Ready to guide');
-      } catch (err) {
-        console.error(err);
-        setStatus('Error — please try again');
-      }
-    };
+    // While guiding — allow user to change destination
+    if (stage === STAGE.GUIDING) {
+      const lowerTranscript = transcript.toLowerCase();
+      const matchedRoom = rooms.find(room =>
+        lowerTranscript.includes(room.toLowerCase())
+      );
 
-    handleSpeech();
+      if (matchedRoom) {
+        const handleNewDestination = async () => {
+          try {
+            setDestination(matchedRoom);
+            setStage(STAGE.NAVIGATING);
+            setStatus(`Rerouting to ${matchedRoom}...`);
+            lastInstructionRef.current = '';
+            isSpeakingRef.current = false;
+
+            const data = await navigateToRoom(matchedRoom, rooms, summary);
+            setReply(data.directions);
+
+            setStatus(`Navigating to ${matchedRoom}`);
+            await speakText(data.directions);
+
+            setStage(STAGE.GUIDING);
+            setStatus(`Guiding you to ${matchedRoom}...`);
+          } catch (err) {
+            console.error(err);
+            setStatus('Reroute failed — try again');
+            setStage(STAGE.GUIDING);
+          }
+        };
+
+        handleNewDestination();
+        return;
+      }
+    }
+
+    // Default — only when IDLE
+    if (stage === STAGE.IDLE) {
+      const handleSpeech = async () => {
+        try {
+          setStatus('Thinking...');
+          const data = await getNavigation(transcript);
+          setReply(data.reply);
+          setStatus('Speaking...');
+          await speakText(data.reply);
+          setStatus('Ready to guide');
+        } catch (err) {
+          console.error(err);
+          setStatus('Error — please try again');
+        }
+      };
+
+      handleSpeech();
+    }
+
   }, [transcript]);
 
   // ── Spacebar shortcut ─────────────────────────────
@@ -189,7 +231,6 @@ function App() {
   return (
     <div className="app-container">
 
-      {/* Camera feed — visible when guiding */}
       <video
         ref={videoRef}
         autoPlay
@@ -208,7 +249,6 @@ function App() {
 
       <StatusBar status={isListening ? 'Listening...' : status} />
 
-      {/* Video upload */}
       {stage === STAGE.IDLE && (
         <div className="upload-area" onClick={() => fileInputRef.current.click()}>
           <div className="upload-icon">🎥</div>
@@ -224,7 +264,6 @@ function App() {
         </div>
       )}
 
-      {/* Scanning spinner */}
       {stage === STAGE.SCANNING && (
         <div className="scanning-area">
           <div className="scan-spinner" />
@@ -232,7 +271,6 @@ function App() {
         </div>
       )}
 
-      {/* Room list */}
       {(stage === STAGE.ROOM_LIST || stage === STAGE.NAVIGATING || stage === STAGE.GUIDING) && (
         <div className="room-list">
           <p className="room-list-label">Rooms found:</p>
@@ -258,6 +296,9 @@ function App() {
             setSummary('');
             setDestination('');
             setReply('');
+            lastInstructionRef.current = '';
+            handledTranscriptRef.current = '';
+            isSpeakingRef.current = false;
             setStatus('Upload a video of your space to begin');
           }}>
             Upload New Video

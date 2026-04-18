@@ -1,27 +1,23 @@
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
-require('dotenv').config();
 const path = require('path');
+require('dotenv').config();
 
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
+
+fs.readdirSync('uploads').forEach(file => {
+  fs.unlinkSync(path.join('uploads', file));
+});
 
 const app = express();
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json({ limit: '100mb' }));
 
 app.use('/api/navigate', require('./routes/navigate'));
-app.use('/api/speech', require('./routes/speech'));
 app.use('/api/vision', require('./routes/vision'));
+app.use('/api/speech', require('./routes/speech'));   // ← this was missing
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-// Increase timeout for large video uploads
-server.timeout = 120000; // 2 minutes
-
-// Clean up any leftover files from previous crashed sessions
-const uploadFiles = fs.readdirSync('uploads');
-uploadFiles.forEach(file => {
-  fs.unlinkSync(path.join('uploads', file));
-});
+server.timeout = 120000;
