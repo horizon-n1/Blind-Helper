@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Initialize OpenAI using the key loaded from .env
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY 
-});
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 const DEMO_MAP = `
 - Entrance: (0,0)
@@ -18,28 +17,23 @@ router.post('/', async (req, res) => {
   const { message } = req.body;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a navigation assistant for the blind. 
-          Use this map data: ${DEMO_MAP}.
-          Provide a short, clear, 1-2 sentence direction to help them reach their destination.
-          Only give the next immediate step or a high-level summary.`
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ]
-    });
+    const prompt = `
+      You are a navigation assistant for the blind. 
+      Use this map data: ${DEMO_MAP}.
+      
+      The user just said: "${message}"
+      
+      Provide a short, clear, 1-2 sentence direction to help them reach their destination.
+      Only give the next immediate step or a high-level summary.
+    `;
 
-    const text = response.choices[0].message.content;
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
     res.json({ reply: text });
-    
   } catch (error) {
-    console.error("OpenAI Error:", error);
+    console.error("Gemini Error:", error);
     res.status(500).json({ error: "Failed to generate navigation" });
   }
 });
